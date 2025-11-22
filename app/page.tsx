@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState } from "react";
+// Use NEXT_PUBLIC_API_URL so deployments can point to the backend
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 import { Upload, Search, X, CheckCircle, Calendar, Users, Plane, Clock, FileText, User, Baby, PlaneTakeoff } from "lucide-react";
 
 export default function BookingSearch() {
@@ -28,7 +30,7 @@ export default function BookingSearch() {
     try {
       const form = new FormData();
       form.append("file", file);
-      const res = await fetch("http://localhost:8000/api/upload", {
+      const res = await fetch(`${API_BASE}/api/upload`, {
         method: "POST",
         body: form,
       });
@@ -65,7 +67,7 @@ export default function BookingSearch() {
         const form = new FormData();
         form.append("booking", booking);
         form.append("sessionId", sessionId);
-        const res = await fetch("http://localhost:8000/api/search", { method: "POST", body: form });
+        const res = await fetch(`${API_BASE}/api/search`, { method: "POST", body: form });
         if (!res.ok) {
           const j = await res.json().catch(()=>({detail:res.statusText}));
           throw new Error(j.detail || "Server error");
@@ -78,7 +80,7 @@ export default function BookingSearch() {
       const form = new FormData();
       if (file) form.append("file", file);
       form.append("booking", booking);
-      const res = await fetch("http://localhost:8000/api/parse", { method: "POST", body: form });
+      const res = await fetch(`${API_BASE}/api/parse`, { method: "POST", body: form });
       if (!res.ok) {
         const j = await res.json().catch(()=>({detail:res.statusText}));
         throw new Error(j.detail || "Server error");
