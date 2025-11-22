@@ -11,18 +11,40 @@ from uuid import uuid4
 
 app = FastAPI()
 
-origins = [
-    "http://localhost:3000",              # dev frontend
-    "https://bookingapp-lclk.vercel.app", # deployed frontend
-]
-# Allow local frontend (adjust origin as needed)
+FRONTEND_URLS = os.getenv("FRONTEND_URLS", "http://localhost:3000").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,       # allow these origins
-    allow_credentials=True,
-    allow_methods=["*"],         # allow all HTTP methods
-    allow_headers=["*"],         # allow all headers
+    allow_origins=["*"],  # อนุญาตทุก origin
+    allow_credentials=False,  # ต้องเป็น False เมื่อใช้ "*"
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=3600,
 )
+
+# ⚠️ เพิ่ม OPTIONS handler สำหรับทุก route
+@app.options("/api/upload")
+async def options_upload():
+    return JSONResponse(
+        content={"message": "OK"},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )
+
+@app.options("/api/search")
+async def options_search():
+    return JSONResponse(
+        content={"message": "OK"},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )
 
 # -------------------
 # Parsing helpers (adapted from your provided code)
