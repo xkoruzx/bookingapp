@@ -11,32 +11,24 @@ from uuid import uuid4
 
 app = FastAPI()
 
-FRONTEND_URLS = os.getenv("FRONTEND_URLS", "http://localhost:3000").split(",")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# ⚠️ เพิ่ม middleware เพื่อจัดการ OPTIONS ทุก request
+# ⚠️ CORS - อนุญาตทุก origin
+# ⚠️ Middleware สำหรับ OPTIONS request
 @app.middleware("http")
-async def add_cors_headers(request: Request, call_next):
+async def cors_middleware(request: Request, call_next):
     if request.method == "OPTIONS":
         return Response(
             status_code=200,
             headers={
                 "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "*",
+                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
                 "Access-Control-Allow-Headers": "*",
-                "Access-Control-Max-Age": "3600",
             }
         )
+    
     response = await call_next(request)
+    response.headers["Access-Control-Allow-Origin"] = "*"
     return response
-
 
 # -------------------
 # Parsing helpers (adapted from your provided code)
@@ -624,128 +616,139 @@ def parse_booking(pages, booking_no, prefix_arrival=None, prefix_departure=None,
     }
 
 # -------------------
-# API endpoints
-# -------------------
-
-# Parse uploaded PDF + booking number
-@app.post("/api/parse")
-async def parse_upload(
-    booking: str = Form(...),
-    file: UploadFile = File(...)
-):
-    if not booking:
-        raise HTTPException(status_code=400, detail="booking required")
-
-    # Save uploaded file to a temp file
-    tmp_dir = tempfile.mkdtemp()
-    tmp_path = os.path.join(tmp_dir, file.filename)
-    with open(tmp_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
-
-    try:
-        pages = extract_all_pages(tmp_path)
-        index = build_booking_index(pages)
-        pre_matched = index.get(booking)
-        result = parse_booking(pages, booking, prefix_arrival=None, prefix_departure=None, pre_matched_pages=pre_matched)
-        if not result:
-            return JSONResponse(status_code=404, content={"detail": "Booking not found"})
-        # attach original booking for frontend convenience
-        result["booking"] = booking
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        try:
-            shutil.rmtree(tmp_dir)
-        except Exception:
-            pass
-
-# Optional: parse using an existing server file path (sample/test). 
-# Developer note: file path available on instance:
-SAMPLE_PATH = r"C:\Users\Windows 10\Downloads\test\HKT.pdf"
-# You can change SAMPLE_PATH to a real PDF path when available.
-
-
-# -------------------
-# In-memory upload cache (session -> {pages, index, created})
+# In-memory cache
 # -------------------
 CACHE = {}
-# Time-to-live for cache entries (seconds)
-CACHE_TTL_SECONDS = 60 * 30  # 30 minutes
+CACHE_TTL_SECONDS = 60 * 30
 
 def _cleanup_cache():
     now = datetime.utcnow()
     to_delete = [k for k, v in CACHE.items() if (now - v.get('created')).total_seconds() > CACHE_TTL_SECONDS]
     for k in to_delete:
-        try:
-            del CACHE[k]
-        except Exception:
-            pass
+        del CACHE[k]
 
+# -------------------
+# API Routes
+# -------------------
+
+@app.get("/")
+def root():
+    return {"msg": "Booking parser API is running", "status": "ok"}
+
+# ⚠️ เพิ่ม health check endpoint
+@app.get("/health")
+def health_check():
+    return {"status": "healthy"}
 
 @app.post("/api/upload")
 async def upload_pdf(file: UploadFile = File(...)):
-    """Upload a PDF, extract all pages once and store in an in-memory cache.
-    Returns a `sessionId` which the client can use for fast searches.
-    """
+    """Upload PDF and cache it"""
     _cleanup_cache()
+    
     if not file:
-        raise HTTPException(status_code=400, detail="file required")
-
+        raise HTTPException(status_code=400, detail="No file provided")
+    
+    if not file.filename.endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="File must be a PDF")
+    
     tmp_dir = tempfile.mkdtemp()
     tmp_path = os.path.join(tmp_dir, file.filename)
-    with open(tmp_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
-
+    
     try:
+        # Save file
+        with open(tmp_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        
+        # Extract pages
         pages = extract_all_pages(tmp_path)
         index = build_booking_index(pages)
+        
+        # Create session
         session_id = str(uuid4())
-        CACHE[session_id] = {"pages": pages, "index": index, "created": datetime.utcnow()}
-        return {"sessionId": session_id, "pages": len(pages)}
+        CACHE[session_id] = {
+            "pages": pages,
+            "index": index,
+            "created": datetime.utcnow()
+        }
+        
+        return {
+            "sessionId": session_id,
+            "pages": len(pages),
+            "status": "success"
+        }
+    
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Error processing PDF: {str(e)}")
+    
     finally:
         try:
             shutil.rmtree(tmp_dir)
-        except Exception:
+        except:
             pass
-
 
 @app.post("/api/search")
 async def search_cache(booking: str = Form(...), sessionId: str = Form(...)):
-    """Search a cached upload by sessionId + booking number. Returns parsed details."""
+    """Search cached PDF by booking number"""
     if not booking or not sessionId:
         raise HTTPException(status_code=400, detail="booking and sessionId required")
-
+    
     entry = CACHE.get(sessionId)
     if not entry:
         raise HTTPException(status_code=404, detail="Session not found or expired")
-
+    
     pages = entry.get("pages")
     index = entry.get("index")
     pre_matched = index.get(booking) if index else None
+    
     result = parse_booking(pages, booking, prefix_arrival=None, prefix_departure=None, pre_matched_pages=pre_matched)
+    
     if not result:
-        return JSONResponse(status_code=404, content={"detail": "Booking not found"})
+        raise HTTPException(status_code=404, detail="Booking not found")
+    
     result["booking"] = booking
     result["sessionId"] = sessionId
     return result
 
-@app.post("/api/parse_sample")
-async def parse_sample(booking: str = Form(...)):
-    if not os.path.exists(SAMPLE_PATH):
-        raise HTTPException(status_code=404, detail=f"Sample file not found at {SAMPLE_PATH}")
-    pages = extract_all_pages(SAMPLE_PATH)
-    index = build_booking_index(pages)
-    pre_matched = index.get(booking)
-    result = parse_booking(pages, booking, prefix_arrival=None, prefix_departure=None, pre_matched_pages=pre_matched)
-    if not result:
-        return JSONResponse(status_code=404, content={"detail": "Booking not found in sample file"})
-    result["booking"] = booking
-    return result
+@app.post("/api/parse")
+async def parse_upload(
+    booking: str = Form(...),
+    file: UploadFile = File(...)
+):
+    """Parse PDF with booking number (no caching)"""
+    if not booking:
+        raise HTTPException(status_code=400, detail="booking required")
+    
+    tmp_dir = tempfile.mkdtemp()
+    tmp_path = os.path.join(tmp_dir, file.filename)
+    
+    try:
+        with open(tmp_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        
+        pages = extract_all_pages(tmp_path)
+        index = build_booking_index(pages)
+        pre_matched = index.get(booking)
+        
+        result = parse_booking(pages, booking, prefix_arrival=None, prefix_departure=None, pre_matched_pages=pre_matched)
+        
+        if not result:
+            raise HTTPException(status_code=404, detail="Booking not found")
+        
+        result["booking"] = booking
+        return result
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+    finally:
+        try:
+            shutil.rmtree(tmp_dir)
+        except:
+            pass
 
-# Root
-@app.get("/")
-def root():
-    return {"msg": "Booking parser API. POST /api/parse with multipart (file + booking)."}
+# ⚠️ OPTIONS handlers
+@app.options("/api/upload")
+@app.options("/api/search")
+@app.options("/api/parse")
+async def options_handler():
+    return Response(status_code=200)
