@@ -11,6 +11,7 @@ from uuid import uuid4
 
 app = FastAPI()
 
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -21,9 +22,9 @@ app.add_middleware(
     max_age=3600,
 )
 
+# Middleware
 @app.middleware("http")
 async def add_cors_headers(request: Request, call_next):
-    # จัดการ OPTIONS request ทุกตัว
     if request.method == "OPTIONS":
         return Response(
             status_code=200,
@@ -35,15 +36,16 @@ async def add_cors_headers(request: Request, call_next):
             }
         )
     
-    # ประมวลผล request ปกติ
     try:
         response = await call_next(request)
         response.headers["Access-Control-Allow-Origin"] = "*"
         return response
     except Exception as e:
+        print(f"❌ Middleware error: {str(e)}")
+        print(traceback.format_exc())
         return JSONResponse(
             status_code=500,
-            content={"detail": str(e)},
+            content={"detail": f"Server error: {str(e)}"},
             headers={"Access-Control-Allow-Origin": "*"}
         )
 # -------------------
@@ -645,50 +647,78 @@ def _cleanup_cache():
             del CACHE[k]
         except:
             pass
-# ============================================
-# API Routes
-# ============================================
 
+# Routes
 @app.get("/")
 def root():
-    """Health check endpoint"""
     return {
         "status": "ok",
-        "message": "Booking Parser API is running",
+        "message": "Booking Parser API",
         "version": "1.0.0"
     }
 
 @app.get("/health")
 def health():
-    """Health check"""
-    return {"status": "healthy"}
+    return {"status": "healthy", "cache_size": len(CACHE)}
 
-# ⚠️ ต้องเป็น POST ไม่ใช่ GET
+# ⚠️ แก้ upload endpoint - เพิ่m error handling
 @app.post("/api/upload")
 async def upload_pdf(file: UploadFile = File(...)):
-    """Upload PDF and cache for fast searching"""
+    """Upload PDF and cache"""
+    print(f"📥 Received upload request: {file.filename}")
+    
+    # Cleanup cache
     _cleanup_cache()
     
+    # Validate file
     if not file:
+        print("❌ No file provided")
         raise HTTPException(status_code=400, detail="No file provided")
     
     if not file.filename.lower().endswith('.pdf'):
+        print(f"❌ Invalid file type: {file.filename}")
         raise HTTPException(status_code=400, detail="File must be a PDF")
     
+    # Check file size (limit 10MB for free tier)
+    content = await file.read()
+    file_size_mb = len(content) / (1024 * 1024)
+    print(f"📄 File size: {file_size_mb:.2f} MB")
+    
+    if file_size_mb > 10:
+        raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+    
+    # Create temp directory
     tmp_dir = tempfile.mkdtemp()
     tmp_path = os.path.join(tmp_dir, file.filename)
     
     try:
-        # บันทึกไฟล์
+        # Save file
+        print(f"💾 Saving to: {tmp_path}")
         with open(tmp_path, "wb") as f:
-            content = await file.read()
             f.write(content)
         
-        # Extract pages
-        pages = extract_all_pages(tmp_path)
-        index = build_booking_index(pages)
+        # Extract pages with timeout
+        print("📖 Extracting pages...")
+        try:
+            # ⚠️ ใช้ asyncio.wait_for เพื่อ timeout
+            pages = await asyncio.wait_for(
+                asyncio.to_thread(extract_all_pages, tmp_path),
+                timeout=30.0  # 30 seconds timeout
+            )
+            print(f"✅ Extracted {len(pages)} pages")
+        except asyncio.TimeoutError:
+            print("❌ Timeout while extracting pages")
+            raise HTTPException(status_code=504, detail="PDF processing timeout")
+        except Exception as e:
+            print(f"❌ Error extracting pages: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error extracting PDF: {str(e)}")
         
-        # สร้าง session
+        # Build index
+        print("🔍 Building index...")
+        index = build_booking_index(pages)
+        print(f"✅ Index built with {len(index)} bookings")
+        
+        # Create session
         session_id = str(uuid4())
         CACHE[session_id] = {
             "pages": pages,
@@ -696,77 +726,115 @@ async def upload_pdf(file: UploadFile = File(...)):
             "created": datetime.utcnow()
         }
         
+        print(f"✅ Upload successful: {session_id}")
+        
         return JSONResponse(
             content={
                 "sessionId": session_id,
                 "pages": len(pages),
+                "bookings": len(index),
                 "status": "success"
             },
             headers={"Access-Control-Allow-Origin": "*"}
         )
     
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+        print(f"❌ Unexpected error: {str(e)}")
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
     
     finally:
+        # Cleanup
         try:
             shutil.rmtree(tmp_dir)
-        except:
-            pass
+            print(f"🗑️ Cleaned up temp dir")
+        except Exception as e:
+            print(f"⚠️ Error cleaning up: {str(e)}")
 
 @app.post("/api/search")
 async def search_cache(
     booking: str = Form(...),
     sessionId: str = Form(...)
 ):
-    """Search cached PDF by booking number"""
+    """Search cached PDF"""
+    print(f"🔍 Search request: booking={booking}, session={sessionId}")
+    
     if not booking or not sessionId:
         raise HTTPException(status_code=400, detail="booking and sessionId required")
     
     entry = CACHE.get(sessionId)
     if not entry:
+        print(f"❌ Session not found: {sessionId}")
         raise HTTPException(status_code=404, detail="Session not found or expired")
     
     pages = entry.get("pages")
     index = entry.get("index")
     pre_matched = index.get(booking) if index else None
     
-    result = parse_booking(
-        pages, booking,
-        prefix_arrival=None,
-        prefix_departure=None,
-        pre_matched_pages=pre_matched
-    )
+    try:
+        result = parse_booking(
+            pages, booking,
+            prefix_arrival=None,
+            prefix_departure=None,
+            pre_matched_pages=pre_matched
+        )
+        
+        if not result:
+            print(f"❌ Booking not found: {booking}")
+            raise HTTPException(status_code=404, detail="Booking not found")
+        
+        result["booking"] = booking
+        result["sessionId"] = sessionId
+        
+        print(f"✅ Search successful: {booking}")
+        
+        return JSONResponse(
+            content=result,
+            headers={"Access-Control-Allow-Origin": "*"}
+        )
     
-    if not result:
-        raise HTTPException(status_code=404, detail="Booking not found")
-    
-    result["booking"] = booking
-    result["sessionId"] = sessionId
-    
-    return JSONResponse(
-        content=result,
-        headers={"Access-Control-Allow-Origin": "*"}
-    )
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Search error: {str(e)}")
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Search error: {str(e)}")
 
 @app.post("/api/parse")
 async def parse_upload(
     booking: str = Form(...),
     file: UploadFile = File(...)
 ):
-    """Parse PDF without caching"""
+    """Parse without caching"""
+    print(f"📥 Parse request: booking={booking}, file={file.filename}")
+    
     if not booking:
         raise HTTPException(status_code=400, detail="booking required")
+    
+    content = await file.read()
+    file_size_mb = len(content) / (1024 * 1024)
+    
+    if file_size_mb > 10:
+        raise HTTPException(status_code=400, detail="File too large (max 10MB)")
     
     tmp_dir = tempfile.mkdtemp()
     tmp_path = os.path.join(tmp_dir, file.filename)
     
     try:
         with open(tmp_path, "wb") as f:
-            content = await file.read()
             f.write(content)
         
-        pages = extract_all_pages(tmp_path)
+        # Extract with timeout
+        try:
+            pages = await asyncio.wait_for(
+                asyncio.to_thread(extract_all_pages, tmp_path),
+                timeout=30.0
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504, detail="PDF processing timeout")
+        
         index = build_booking_index(pages)
         pre_matched = index.get(booking)
         
@@ -787,7 +855,11 @@ async def parse_upload(
             headers={"Access-Control-Allow-Origin": "*"}
         )
     
+    except HTTPException:
+        raise
     except Exception as e:
+        print(f"❌ Parse error: {str(e)}")
+        print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
     
     finally:
@@ -796,7 +868,7 @@ async def parse_upload(
         except:
             pass
 
-# ⚠️ OPTIONS handlers สำหรับทุก endpoint
+# OPTIONS handlers
 @app.options("/api/upload")
 @app.options("/api/search")
 @app.options("/api/parse")

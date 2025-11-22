@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 // Use NEXT_PUBLIC_API_URL so deployments can point to the backend
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://bookingapp-jfc8.onrender.com";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 import { Upload, Search, X, CheckCircle, Calendar, Users, Plane, Clock, FileText, User, Baby, PlaneTakeoff } from "lucide-react";
 
 export default function BookingSearch() {
@@ -18,6 +18,11 @@ export default function BookingSearch() {
   // --- File input handler ---
   const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0] || null;
+
+    if (f && f.size > 10 * 1024 * 1024) {
+    setError("File too large! Maximum 10MB");
+    return;
+  }
     setFile(f);
     setError(null);
   };
