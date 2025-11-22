@@ -17,40 +17,61 @@ export default function BookingSearch() {
 
   // --- File input handler ---
   const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files && e.target.files[0] ? e.target.files[0] : null;
+    const f = e.target.files?.[0] || null;
     setFile(f);
+    setError(null);
   };
 
   // --- Upload PDF & cache ---
   const onUpload = async () => {
     setError(null);
-    if (!file) return setError("Please pick a PDF file to upload");
+    if (!file) {
+      setError("Please pick a PDF file to upload");
+      return;
+    }
+    
     setUploading(true);
+    
     try {
       const form = new FormData();
       form.append("file", file);
-
-      console.log("Uploading to:", `${API_BASE}/api/upload`);
-
-      const res = await fetch(`${API_BASE}/api/upload`, { 
+      
+      console.log("📤 Uploading to:", `${API_BASE}/api/upload`);
+      console.log("📄 File:", file.name, file.type, file.size);
+      
+      const res = await fetch(`${API_BASE}/api/upload`, {
         method: "POST",
-        body: form, 
+        body: form,
+        // ⚠️ ไม่ต้องใส่ headers เพราะ browser จะใส่ให้เองพร้อม boundary
       });
-
-      console.log("Response status:", res.status); // ⚠️ เพิ่ม log
-
-
+      
+      console.log("📥 Response status:", res.status);
+      console.log("📥 Response headers:", Object.fromEntries(res.headers.entries()));
+      
       if (!res.ok) {
-        const errorData = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(errorData.detail || "Upload failed");
+        const errorText = await res.text();
+        console.error("❌ Error response:", errorText);
+        
+        let errorDetail;
+        try {
+          errorDetail = JSON.parse(errorText).detail;
+        } catch {
+          errorDetail = errorText || res.statusText;
+        }
+        
+        throw new Error(errorDetail || "Upload failed");
       }
-
+      
       const data = await res.json();
+      console.log("✅ Upload success:", data);
+      
       setSessionId(data.sessionId);
       setPagesCount(data.pages ?? null);
       setResult(null);
+      setError(null);
+      
     } catch (err) {
-      console.error("Upload error:", err); // ⚠️ เพิ่ม log
+      console.error("❌ Upload error:", err);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setUploading(false);
@@ -63,30 +84,80 @@ export default function BookingSearch() {
     setPagesCount(null);
     setFile(null);
     setResult(null);
+    setError(null);
   };
 
   // --- Search booking (uses cached PDF if available) ---
   const onSearch = async () => {
     setError(null);
-    if (!booking) return setError("Please enter booking number");
+    if (!booking) {
+      setError("Please enter booking number");
+      return;
+    }
+    
     setLoading(true);
+    
     try {
       const form = new FormData();
       form.append("booking", booking);
+      
       if (sessionId) {
+        // Search from cache
         form.append("sessionId", sessionId);
-        const res = await fetch(`${API_BASE}/api/search`, { method: "POST", body: form });
-        if (!res.ok) throw new Error((await res.json().catch(()=>({detail:res.statusText}))).detail || "Server error");
-        setResult(await res.json());
+        console.log("🔍 Searching cache:", booking, sessionId);
+        
+        const res = await fetch(`${API_BASE}/api/search`, {
+          method: "POST",
+          body: form,
+        });
+        
+        console.log("📥 Search response:", res.status);
+        
+        if (!res.ok) {
+          const errorText = await res.text();
+          let errorDetail;
+          try {
+            errorDetail = JSON.parse(errorText).detail;
+          } catch {
+            errorDetail = errorText || res.statusText;
+          }
+          throw new Error(errorDetail || "Search failed");
+        }
+        
+        const data = await res.json();
+        setResult(data);
+        
       } else if (file) {
+        // Parse without cache
         form.append("file", file);
-        const res = await fetch(`${API_BASE}/api/parse`, { method: "POST", body: form });
-        if (!res.ok) throw new Error((await res.json().catch(()=>({detail:res.statusText}))).detail || "Server error");
-        setResult(await res.json());
+        console.log("🔍 Parsing file:", booking);
+        
+        const res = await fetch(`${API_BASE}/api/parse`, {
+          method: "POST",
+          body: form,
+        });
+        
+        console.log("📥 Parse response:", res.status);
+        
+        if (!res.ok) {
+          const errorText = await res.text();
+          let errorDetail;
+          try {
+            errorDetail = JSON.parse(errorText).detail;
+          } catch {
+            errorDetail = errorText || res.statusText;
+          }
+          throw new Error(errorDetail || "Parse failed");
+        }
+        
+        const data = await res.json();
+        setResult(data);
+        
       } else {
-        setError("Please upload a PDF or provide a booking number");
+        setError("Please upload a PDF first");
       }
     } catch (err) {
+      console.error("❌ Search error:", err);
       setError(err instanceof Error ? err.message : String(err));
       setResult(null);
     } finally {
@@ -104,6 +175,8 @@ export default function BookingSearch() {
           </div>
           <h1 className="text-4xl font-bold text-gray-900 mb-2">Flight Booking Parser</h1>
           <p className="text-gray-600">Upload your booking PDF and search for booking details instantly</p>
+          {/* ⚠️ Debug info */}
+          <p className="text-xs text-gray-400 mt-2">API: {API_BASE}</p>
         </div>
 
         {/* Main Card */}
@@ -191,6 +264,16 @@ export default function BookingSearch() {
               </div>
             </div>
           </div>
+
+          {/* Error Message */}
+          {error && (
+            <div className="mx-8 mt-6 p-4 bg-red-50 border-l-4 border-red-500 rounded-lg">
+              <div className="flex items-center gap-3">
+                <X className="w-5 h-5 text-red-600 flex-shrink-0" />
+                <p className="text-red-800 font-medium">{error}</p>
+              </div>
+            </div>
+          )}
 
           {/* Error Message */}
           {error && (
