@@ -1,6 +1,6 @@
 # app/main.py
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Request
+from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 import os, tempfile, shutil
 import pdfplumber
@@ -15,36 +15,28 @@ FRONTEND_URLS = os.getenv("FRONTEND_URLS", "http://localhost:3000").split(",")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # อนุญาตทุก origin
-    allow_credentials=False,  # ต้องเป็น False เมื่อใช้ "*"
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
-    max_age=3600,
 )
 
-# ⚠️ เพิ่ม OPTIONS handler สำหรับทุก route
-@app.options("/api/upload")
-async def options_upload():
-    return JSONResponse(
-        content={"message": "OK"},
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "*",
-        }
-    )
+# ⚠️ เพิ่ม middleware เพื่อจัดการ OPTIONS ทุก request
+@app.middleware("http")
+async def add_cors_headers(request: Request, call_next):
+    if request.method == "OPTIONS":
+        return Response(
+            status_code=200,
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "*",
+                "Access-Control-Allow-Headers": "*",
+                "Access-Control-Max-Age": "3600",
+            }
+        )
+    response = await call_next(request)
+    return response
 
-@app.options("/api/search")
-async def options_search():
-    return JSONResponse(
-        content={"message": "OK"},
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "*",
-        }
-    )
 
 # -------------------
 # Parsing helpers (adapted from your provided code)

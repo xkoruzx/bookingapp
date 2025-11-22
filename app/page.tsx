@@ -29,13 +29,28 @@ export default function BookingSearch() {
     try {
       const form = new FormData();
       form.append("file", file);
-      const res = await fetch(`${API_BASE}/api/upload`, { method: "POST", body: form });
-      if (!res.ok) throw new Error((await res.json().catch(()=>({detail:res.statusText}))).detail || "Upload failed");
+
+      console.log("Uploading to:", `${API_BASE}/api/upload`);
+
+      const res = await fetch(`${API_BASE}/api/upload`, { 
+        method: "POST",
+        body: form, 
+      });
+
+      console.log("Response status:", res.status); // ⚠️ เพิ่ม log
+
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(errorData.detail || "Upload failed");
+      }
+
       const data = await res.json();
       setSessionId(data.sessionId);
       setPagesCount(data.pages ?? null);
       setResult(null);
     } catch (err) {
+      console.error("Upload error:", err); // ⚠️ เพิ่ม log
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setUploading(false);
