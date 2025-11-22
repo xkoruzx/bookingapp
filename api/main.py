@@ -13,10 +13,15 @@ from uuid import uuid4
 
 app = FastAPI()
 
+origins = [
+    "http://localhost:3000",  # your frontend
+    "https://bookingapp-lclk.vercel.app",  # production frontend
+]
+
 # Allow local frontend (adjust origin as needed)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 // Use NEXT_PUBLIC_API_URL so deployments can point to the backend
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://bookingapp-jfc8.onrender.com";
 import { Upload, Search, X, CheckCircle, Calendar, Users, Plane, Clock, FileText, User, Baby, PlaneTakeoff } from "lucide-react";
 
 export default function BookingSearch() {
@@ -15,88 +15,64 @@ export default function BookingSearch() {
   const [pagesCount, setPagesCount] = useState<number | null>(null);
   const [uploading, setUploading] = useState<boolean>(false);
 
+  // --- File input handler ---
   const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files && e.target.files[0] ? e.target.files[0] : null;
     setFile(f);
   };
 
+  // --- Upload PDF & cache ---
   const onUpload = async () => {
     setError(null);
-    if (!file) {
-      setError("Please pick a PDF file to upload");
-      return;
-    }
+    if (!file) return setError("Please pick a PDF file to upload");
     setUploading(true);
     try {
       const form = new FormData();
       form.append("file", file);
-      const res = await fetch(`${API_BASE}/api/upload`, {
-        method: "POST",
-        body: form,
-      });
-      if (!res.ok) {
-        const j = await res.json().catch(()=>({detail:res.statusText}));
-        throw new Error(j.detail || "Upload failed");
-      }
+      const res = await fetch(`${API_BASE}/api/upload`, { method: "POST", body: form });
+      if (!res.ok) throw new Error((await res.json().catch(()=>({detail:res.statusText}))).detail || "Upload failed");
       const data = await res.json();
       setSessionId(data.sessionId);
       setPagesCount(data.pages ?? null);
       setResult(null);
     } catch (err) {
-      if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError(String(err));
-      }
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setUploading(false);
     }
   };
 
+  // --- Clear cached session ---
   const clearSession = () => {
     setSessionId(null);
     setPagesCount(null);
     setFile(null);
+    setResult(null);
   };
 
+  // --- Search booking (uses cached PDF if available) ---
   const onSearch = async () => {
     setError(null);
-    if (!booking) {
-      setError("Please enter booking number");
-      return;
-    }
+    if (!booking) return setError("Please enter booking number");
     setLoading(true);
     try {
+      const form = new FormData();
+      form.append("booking", booking);
       if (sessionId) {
-        const form = new FormData();
-        form.append("booking", booking);
         form.append("sessionId", sessionId);
         const res = await fetch(`${API_BASE}/api/search`, { method: "POST", body: form });
-        if (!res.ok) {
-          const j = await res.json().catch(()=>({detail:res.statusText}));
-          throw new Error(j.detail || "Server error");
-        }
-        const data = await res.json();
-        setResult(data);
-        return;
-      }
-
-      const form = new FormData();
-      if (file) form.append("file", file);
-      form.append("booking", booking);
-      const res = await fetch(`${API_BASE}/api/parse`, { method: "POST", body: form });
-      if (!res.ok) {
-        const j = await res.json().catch(()=>({detail:res.statusText}));
-        throw new Error(j.detail || "Server error");
-      }
-      const data = await res.json();
-      setResult(data);
-    } catch (err) {
-      if (err instanceof Error) {
-        setError(err.message);
+        if (!res.ok) throw new Error((await res.json().catch(()=>({detail:res.statusText}))).detail || "Server error");
+        setResult(await res.json());
+      } else if (file) {
+        form.append("file", file);
+        const res = await fetch(`${API_BASE}/api/parse`, { method: "POST", body: form });
+        if (!res.ok) throw new Error((await res.json().catch(()=>({detail:res.statusText}))).detail || "Server error");
+        setResult(await res.json());
       } else {
-        setError(String(err));
+        setError("Please upload a PDF or provide a booking number");
       }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
       setResult(null);
     } finally {
       setLoading(false);
