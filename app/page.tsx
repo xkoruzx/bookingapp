@@ -43,7 +43,11 @@ export default function BookingSearch() {
       setPagesCount(data.pages ?? null);
       setResult(null);
     } catch (err) {
-      setError((err && err.message) ? String(err.message) : String(err));
+      if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError(String(err));
+      }
     } finally {
       setUploading(false);
     }
@@ -88,7 +92,11 @@ export default function BookingSearch() {
       const data = await res.json();
       setResult(data);
     } catch (err) {
-      setError((err && err.message) ? String(err.message) : String(err));
+      if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError(String(err));
+      }
       setResult(null);
     } finally {
       setLoading(false);
@@ -248,7 +256,7 @@ export default function BookingSearch() {
                     <p className="text-xs text-purple-700 font-medium">Passengers</p>
                   </div>
                   <div className="space-y-1.5">
-                    {result.passengers?.map((passenger, idx) => (
+                    {result.passengers?.map((passenger: string, idx: number) => (
                       <div key={idx} className="bg-white/70 px-3 py-2 rounded-lg text-sm font-semibold text-purple-900">
                         {idx + 1}. {passenger}
                       </div>
