@@ -1,0 +1,7 @@
+pytest
+reportlab
+fastapi
+pdfplumber
+requests
+python-multipart
+uvicorn
