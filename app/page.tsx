@@ -15,7 +15,7 @@ export default function BookingSearch() {
   const [pagesCount, setPagesCount] = useState(null);
   const [uploading, setUploading] = useState(false);
 
-  const onFileChange = (e) => {
+  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files && e.target.files[0] ? e.target.files[0] : null;
     setFile(f);
   };
