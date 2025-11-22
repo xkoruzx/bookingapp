@@ -6,14 +6,14 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 import { Upload, Search, X, CheckCircle, Calendar, Users, Plane, Clock, FileText, User, Baby, PlaneTakeoff } from "lucide-react";
 
 export default function BookingSearch() {
-  const [file, setFile] = useState(null);
-  const [booking, setBooking] = useState("");
-  const [result, setResult] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [sessionId, setSessionId] = useState(null);
-  const [pagesCount, setPagesCount] = useState(null);
-  const [uploading, setUploading] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [booking, setBooking] = useState<string>("");
+  const [result, setResult] = useState<any | null>(null);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [pagesCount, setPagesCount] = useState<number | null>(null);
+  const [uploading, setUploading] = useState<boolean>(false);
 
   const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files && e.target.files[0] ? e.target.files[0] : null;
