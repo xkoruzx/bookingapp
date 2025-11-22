@@ -2,9 +2,7 @@
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-import tempfile
-import shutil
-import os
+import os, tempfile, shutil
 import pdfplumber
 import re
 from datetime import datetime, date
@@ -14,17 +12,16 @@ from uuid import uuid4
 app = FastAPI()
 
 origins = [
-    "http://localhost:3000",  # your frontend
-    "https://bookingapp-lclk.vercel.app",  # production frontend
+    "http://localhost:3000",              # dev frontend
+    "https://bookingapp-lclk.vercel.app", # deployed frontend
 ]
-
 # Allow local frontend (adjust origin as needed)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=origins,       # allow these origins
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],         # allow all HTTP methods
+    allow_headers=["*"],         # allow all headers
 )
 
 # -------------------
