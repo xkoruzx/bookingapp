@@ -11,11 +11,19 @@ from uuid import uuid4
 
 app = FastAPI()
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=3600,
+)
 
-# ⚠️ CORS - อนุญาตทุก origin
-# ⚠️ Middleware สำหรับ OPTIONS request
 @app.middleware("http")
-async def cors_middleware(request: Request, call_next):
+async def add_cors_headers(request: Request, call_next):
+    # จัดการ OPTIONS request ทุกตัว
     if request.method == "OPTIONS":
         return Response(
             status_code=200,
@@ -23,13 +31,21 @@ async def cors_middleware(request: Request, call_next):
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
                 "Access-Control-Allow-Headers": "*",
+                "Access-Control-Max-Age": "3600",
             }
         )
     
-    response = await call_next(request)
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    return response
-
+    # ประมวลผล request ปกติ
+    try:
+        response = await call_next(request)
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        return response
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"detail": str(e)},
+            headers={"Access-Control-Allow-Origin": "*"}
+        )
 # -------------------
 # Parsing helpers (adapted from your provided code)
 # -------------------
@@ -623,47 +639,56 @@ CACHE_TTL_SECONDS = 60 * 30
 
 def _cleanup_cache():
     now = datetime.utcnow()
-    to_delete = [k for k, v in CACHE.items() if (now - v.get('created')).total_seconds() > CACHE_TTL_SECONDS]
+    to_delete = [k for k, v in CACHE.items() if (now - v.get('created', now)).total_seconds() > CACHE_TTL_SECONDS]
     for k in to_delete:
-        del CACHE[k]
-
-# -------------------
+        try:
+            del CACHE[k]
+        except:
+            pass
+# ============================================
 # API Routes
-# -------------------
+# ============================================
 
 @app.get("/")
 def root():
-    return {"msg": "Booking parser API is running", "status": "ok"}
+    """Health check endpoint"""
+    return {
+        "status": "ok",
+        "message": "Booking Parser API is running",
+        "version": "1.0.0"
+    }
 
-# ⚠️ เพิ่ม health check endpoint
 @app.get("/health")
-def health_check():
+def health():
+    """Health check"""
     return {"status": "healthy"}
 
+# ⚠️ ต้องเป็น POST ไม่ใช่ GET
 @app.post("/api/upload")
 async def upload_pdf(file: UploadFile = File(...)):
-    """Upload PDF and cache it"""
+    """Upload PDF and cache for fast searching"""
     _cleanup_cache()
     
     if not file:
         raise HTTPException(status_code=400, detail="No file provided")
     
-    if not file.filename.endswith('.pdf'):
+    if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="File must be a PDF")
     
     tmp_dir = tempfile.mkdtemp()
     tmp_path = os.path.join(tmp_dir, file.filename)
     
     try:
-        # Save file
+        # บันทึกไฟล์
         with open(tmp_path, "wb") as f:
-            shutil.copyfileobj(file.file, f)
+            content = await file.read()
+            f.write(content)
         
         # Extract pages
         pages = extract_all_pages(tmp_path)
         index = build_booking_index(pages)
         
-        # Create session
+        # สร้าง session
         session_id = str(uuid4())
         CACHE[session_id] = {
             "pages": pages,
@@ -671,14 +696,17 @@ async def upload_pdf(file: UploadFile = File(...)):
             "created": datetime.utcnow()
         }
         
-        return {
-            "sessionId": session_id,
-            "pages": len(pages),
-            "status": "success"
-        }
+        return JSONResponse(
+            content={
+                "sessionId": session_id,
+                "pages": len(pages),
+                "status": "success"
+            },
+            headers={"Access-Control-Allow-Origin": "*"}
+        )
     
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing PDF: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
     
     finally:
         try:
@@ -687,7 +715,10 @@ async def upload_pdf(file: UploadFile = File(...)):
             pass
 
 @app.post("/api/search")
-async def search_cache(booking: str = Form(...), sessionId: str = Form(...)):
+async def search_cache(
+    booking: str = Form(...),
+    sessionId: str = Form(...)
+):
     """Search cached PDF by booking number"""
     if not booking or not sessionId:
         raise HTTPException(status_code=400, detail="booking and sessionId required")
@@ -700,21 +731,30 @@ async def search_cache(booking: str = Form(...), sessionId: str = Form(...)):
     index = entry.get("index")
     pre_matched = index.get(booking) if index else None
     
-    result = parse_booking(pages, booking, prefix_arrival=None, prefix_departure=None, pre_matched_pages=pre_matched)
+    result = parse_booking(
+        pages, booking,
+        prefix_arrival=None,
+        prefix_departure=None,
+        pre_matched_pages=pre_matched
+    )
     
     if not result:
         raise HTTPException(status_code=404, detail="Booking not found")
     
     result["booking"] = booking
     result["sessionId"] = sessionId
-    return result
+    
+    return JSONResponse(
+        content=result,
+        headers={"Access-Control-Allow-Origin": "*"}
+    )
 
 @app.post("/api/parse")
 async def parse_upload(
     booking: str = Form(...),
     file: UploadFile = File(...)
 ):
-    """Parse PDF with booking number (no caching)"""
+    """Parse PDF without caching"""
     if not booking:
         raise HTTPException(status_code=400, detail="booking required")
     
@@ -723,19 +763,29 @@ async def parse_upload(
     
     try:
         with open(tmp_path, "wb") as f:
-            shutil.copyfileobj(file.file, f)
+            content = await file.read()
+            f.write(content)
         
         pages = extract_all_pages(tmp_path)
         index = build_booking_index(pages)
         pre_matched = index.get(booking)
         
-        result = parse_booking(pages, booking, prefix_arrival=None, prefix_departure=None, pre_matched_pages=pre_matched)
+        result = parse_booking(
+            pages, booking,
+            prefix_arrival=None,
+            prefix_departure=None,
+            pre_matched_pages=pre_matched
+        )
         
         if not result:
             raise HTTPException(status_code=404, detail="Booking not found")
         
         result["booking"] = booking
-        return result
+        
+        return JSONResponse(
+            content=result,
+            headers={"Access-Control-Allow-Origin": "*"}
+        )
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -746,9 +796,16 @@ async def parse_upload(
         except:
             pass
 
-# ⚠️ OPTIONS handlers
+# ⚠️ OPTIONS handlers สำหรับทุก endpoint
 @app.options("/api/upload")
 @app.options("/api/search")
 @app.options("/api/parse")
 async def options_handler():
-    return Response(status_code=200)
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )
