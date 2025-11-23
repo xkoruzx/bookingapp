@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 // Use NEXT_PUBLIC_API_URL so deployments can point to the backend
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://localhost:8000";
 import { Upload, Search, X, CheckCircle, Calendar, Users, Plane, Clock, FileText, User, Baby, PlaneTakeoff } from "lucide-react";
 
 export default function BookingSearch() {
